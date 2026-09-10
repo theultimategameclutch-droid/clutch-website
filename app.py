@@ -1,1102 +1,1326 @@
-from flask import Flask, render_template_string, url_for
+from flask import Flask, request, redirect, url_for, session, flash, render_template_string
+from werkzeug.security import generate_password_hash, check_password_hash
+import sqlite3
 import os
 
 app = Flask(__name__)
 
-HTML = """
+# ============================================================
+# SECURITY
+# ============================================================
+
+app.secret_key = os.environ.get("SECRET_KEY", "change-this-secret-key")
+
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "CLUTCH")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "CHANGE_THIS_PASSWORD")
+
+DATABASE = "clutch.db"
+
+
+# ============================================================
+# GOOGLE FORM LINKS
+# ============================================================
+
+EVENTS = [
+    {
+        "name": "VALORANT",
+        "icon": "⚡",
+        "players": "5 players per team",
+        "classes": "Classes 8–12",
+        "platform": "PC",
+        "format": "Single Elimination • BO1",
+        "details": "Semifinals and below: Swiftplay. Finals: Unrated.",
+        "form": "https://forms.gle/9Xpz8wMiSWjBAuCT6"
+    },
+    {
+        "name": "BGMI",
+        "icon": "🎯",
+        "players": "4 players per team",
+        "classes": "Classes 8–12",
+        "platform": "Mobile",
+        "format": "Single Elimination • BO1",
+        "details": "24 teams • 7 matches • Squad TPP • Erangel, Miramar, Rondo, Livik.",
+        "form": "https://forms.gle/GmU9MpsuuvhPmEWi6"
+    },
+    {
+        "name": "CHESS",
+        "icon": "♟",
+        "players": "1 player per team",
+        "classes": "Classes 8–12",
+        "platform": "PC",
+        "format": "Single Elimination • BO1",
+        "details": "Blitz 5|0 through semifinals. Semifinals and finals: Rapid 10|0.",
+        "form": "https://forms.gle/BXmhHj32V68fZrjw7"
+    },
+    {
+        "name": "MINECRAFT PVP",
+        "icon": "⚔️",
+        "players": "1 player per team",
+        "classes": "Classes 8–12",
+        "platform": "PC",
+        "format": "Single Elimination • BO1",
+        "details": "PvP kit • 10-minute matches • Draw determined by hearts.",
+        "form": "https://forms.gle/GWCjyBR6y6H5uE8x6"
+    },
+    {
+        "name": "MINECRAFT BUILDING",
+        "icon": "🏗️",
+        "players": "1 player per team",
+        "classes": "Classes 8–12",
+        "platform": "PC",
+        "format": "Single Elimination • BO1",
+        "details": "Theme given at the event • 2-hour time limit • Litematica not allowed.",
+        "form": "https://forms.gle/GWCjyBR6y6H5uE8x6"
+    },
+    {
+        "name": "GAME BUILDING WORKSHOP",
+        "icon": "🎮",
+        "players": "Participants",
+        "classes": "Open to participants",
+        "platform": "PC",
+        "format": "Hands-on Workshop",
+        "details": "Learn game concepts, mechanics, controls, design and basic development with guided demonstrations.",
+        "form": "#"
+    }
+]
+
+
+# ============================================================
+# DATABASE
+# ============================================================
+
+def get_db():
+    connection = sqlite3.connect(DATABASE)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def init_db():
+    connection = get_db()
+
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS students (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            class_name TEXT NOT NULL,
+            section TEXT NOT NULL,
+            password TEXT NOT NULL
+        )
+    """)
+
+    connection.commit()
+    connection.close()
+
+
+init_db()
+
+
+# ============================================================
+# COMMON HTML
+# ============================================================
+
+BASE_HTML = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>CLUTCH | The Ultimate Game</title>
-
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        html {
-            scroll-behavior: smooth;
-        }
-
-        body {
-            background: #050505;
-            color: #ffffff;
-            font-family: Arial, Helvetica, sans-serif;
-            overflow-x: hidden;
-        }
-
-        /* =========================
-           NAVIGATION
-        ========================= */
-
-        nav {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 74px;
-            z-index: 1000;
-
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-
-            padding: 0 7%;
-
-            background: rgba(0, 0, 0, 0.72);
-            backdrop-filter: blur(15px);
-
-            border-bottom: 1px solid rgba(255, 193, 7, 0.15);
-        }
-
-        .logo {
-            font-size: 27px;
-            font-weight: 900;
-            letter-spacing: 4px;
-            color: #ffd21c;
-        }
-
-        .logo span {
-            color: white;
-        }
-
-        .nav-links {
-            display: flex;
-            gap: 32px;
-            list-style: none;
-        }
-
-        .nav-links a {
-            color: #ffffff;
-            text-decoration: none;
-            font-size: 14px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            transition: 0.3s;
-        }
-
-        .nav-links a:hover {
-            color: #ffd21c;
-        }
-
-        /* =========================
-           HERO
-        ========================= */
-
-        .hero {
-            position: relative;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
-        }
-
-        .hero-video {
-            position: absolute;
-            inset: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            z-index: 0;
-        }
-
-        .hero-overlay {
-            position: absolute;
-            inset: 0;
-            z-index: 1;
-
-            background:
-                linear-gradient(
-                    90deg,
-                    rgba(0,0,0,0.95),
-                    rgba(0,0,0,0.58),
-                    rgba(0,0,0,0.88)
-                );
-        }
-
-        .hero-overlay::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-
-            background:
-                radial-gradient(
-                    circle at center,
-                    transparent 15%,
-                    rgba(0,0,0,0.65) 100%
-                );
-        }
-
-        .hero-content {
-            position: relative;
-            z-index: 2;
-            width: 90%;
-            max-width: 1200px;
-            text-align: center;
-            padding-top: 60px;
-        }
-
-        .eyebrow {
-            color: #ffd21c;
-            font-size: 15px;
-            font-weight: 800;
-            letter-spacing: 5px;
-            text-transform: uppercase;
-            margin-bottom: 20px;
-        }
-
-        .hero h1 {
-            font-size: clamp(65px, 12vw, 150px);
-            line-height: 0.85;
-            font-weight: 1000;
-            letter-spacing: -7px;
-            text-transform: uppercase;
-
-            color: #ffffff;
-
-            text-shadow:
-                0 0 15px rgba(255,210,28,0.15),
-                0 0 45px rgba(255,210,28,0.08);
-        }
-
-        .hero h1 span {
-            color: #ffd21c;
-        }
-
-        .hero-subtitle {
-            margin-top: 28px;
-            color: #d4d4d4;
-            font-size: 19px;
-            letter-spacing: 2px;
-        }
-
-        .hero-buttons {
-            margin-top: 40px;
-
-            display: flex;
-            justify-content: center;
-            gap: 15px;
-            flex-wrap: wrap;
-        }
-
-        .btn {
-            display: inline-block;
-            padding: 15px 30px;
-            text-decoration: none;
-            text-transform: uppercase;
-            font-size: 13px;
-            font-weight: 900;
-            letter-spacing: 1.5px;
-
-            transition: 0.3s;
-        }
-
-        .btn-primary {
-            background: #ffd21c;
-            color: #000000;
-        }
-
-        .btn-primary:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 12px 30px rgba(255,210,28,0.25);
-        }
-
-        .btn-secondary {
-            border: 1px solid rgba(255,255,255,0.5);
-            color: white;
-            background: rgba(0,0,0,0.3);
-        }
-
-        .btn-secondary:hover {
-            border-color: #ffd21c;
-            color: #ffd21c;
-        }
-
-        /* =========================
-           GENERAL SECTIONS
-        ========================= */
-
-        section {
-            padding: 110px 7%;
-        }
-
-        .section-header {
-            max-width: 850px;
-            margin-bottom: 55px;
-        }
-
-        .section-label {
-            color: #ffd21c;
-            text-transform: uppercase;
-            font-size: 12px;
-            font-weight: 900;
-            letter-spacing: 4px;
-            margin-bottom: 14px;
-        }
-
-        .section-title {
-            font-size: clamp(38px, 6vw, 70px);
-            line-height: 0.95;
-            text-transform: uppercase;
-            font-weight: 950;
-        }
-
-        .section-description {
-            margin-top: 20px;
-            color: #999999;
-            max-width: 700px;
-            line-height: 1.7;
-        }
-
-        /* =========================
-           GAMES
-        ========================= */
-
-        #games {
-            background:
-                linear-gradient(#050505, #080808);
-        }
-
-        .games-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 20px;
-        }
-
-        .game-card {
-            position: relative;
-            min-height: 300px;
-            padding: 35px;
-
-            background:
-                linear-gradient(
-                    135deg,
-                    #111111,
-                    #080808
-                );
-
-            border: 1px solid #202020;
-
-            overflow: hidden;
-            transition: 0.35s;
-        }
-
-        .game-card::before {
-            content: "";
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 5px;
-            height: 100%;
-            background: #ffd21c;
-        }
-
-        .game-card::after {
-            content: "";
-            position: absolute;
-            width: 250px;
-            height: 250px;
-            right: -100px;
-            bottom: -100px;
-
-            border-radius: 50%;
-            background: rgba(255,210,28,0.07);
-        }
-
-        .game-card:hover {
-            transform: translateY(-7px);
-            border-color: rgba(255,210,28,0.5);
-        }
-
-        .game-number {
-            color: #555555;
-            font-size: 13px;
-            font-weight: 900;
-            letter-spacing: 2px;
-        }
-
-        .game-card h3 {
-            margin-top: 35px;
-            font-size: 32px;
-            text-transform: uppercase;
-        }
-
-        .game-card p {
-            margin-top: 15px;
-            color: #999999;
-            line-height: 1.6;
-        }
-
-        .game-info {
-            margin-top: 25px;
-
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-
-        .game-info span {
-            padding: 8px 11px;
-            background: #151515;
-            border: 1px solid #292929;
-
-            color: #cfcfcf;
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-        }
-
-        /* =========================
-           CARDS
-        ========================= */
-
-        #cards {
-            background: #090909;
-        }
-
-        .cards-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 35px;
-            max-width: 1050px;
-            margin: auto;
-        }
-
-        .role-card {
-            background: #050505;
-            border: 1px solid #252525;
-            padding: 18px;
-            transition: 0.35s;
-        }
-
-        .role-card:hover {
-            transform: translateY(-8px);
-            border-color: #ffd21c;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
-        }
-
-        .role-card img {
-            display: block;
-            width: 100%;
-            height: auto;
-        }
-
-        .role-title {
-            text-align: center;
-            margin-top: 18px;
-            color: #ffd21c;
-            font-size: 13px;
-            font-weight: 900;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-        }
-
-        /* =========================
-           WORKSHOP
-        ========================= */
-
-        #workshop {
-            background:
-                linear-gradient(
-                    135deg,
-                    #080808,
-                    #111111
-                );
-        }
-
-        .workshop-box {
-            max-width: 1000px;
-            padding: 50px;
-
-            border: 1px solid #292929;
-            background: rgba(0,0,0,0.35);
-
-            position: relative;
-            overflow: hidden;
-        }
-
-        .workshop-box::before {
-            content: "";
-            position: absolute;
-            width: 400px;
-            height: 400px;
-            right: -200px;
-            top: -200px;
-
-            border-radius: 50%;
-            background: rgba(255,210,28,0.08);
-        }
-
-        .workshop-box h3 {
-            font-size: 38px;
-            text-transform: uppercase;
-        }
-
-        .workshop-box p {
-            margin-top: 20px;
-            color: #a5a5a5;
-            line-height: 1.8;
-            max-width: 750px;
-        }
-
-        .workshop-points {
-            margin-top: 30px;
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
-        }
-
-        .workshop-point {
-            padding: 15px;
-            border-left: 3px solid #ffd21c;
-            background: #111111;
-            color: #cccccc;
-        }
-
-        /* =========================
-           RULES
-        ========================= */
-
-        #rules {
-            background: #050505;
-        }
-
-        .rules-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 20px;
-        }
-
-        .rule {
-            padding: 28px;
-            border: 1px solid #222222;
-            background: #0b0b0b;
-        }
-
-        .rule-number {
-            color: #ffd21c;
-            font-size: 13px;
-            font-weight: 900;
-        }
-
-        .rule h4 {
-            margin-top: 14px;
-            font-size: 19px;
-        }
-
-        .rule p {
-            margin-top: 10px;
-            color: #888888;
-            line-height: 1.6;
-        }
-
-        /* =========================
-           STREAM
-        ========================= */
-
-        #stream {
-            background: #090909;
-        }
-
-        .stream-box {
-            padding: 70px 30px;
-            text-align: center;
-
-            border: 1px solid #292929;
-            background:
-                linear-gradient(
-                    135deg,
-                    #0c0c0c,
-                    #111111
-                );
-        }
-
-        .stream-box h2 {
-            font-size: clamp(35px, 5vw, 60px);
-            text-transform: uppercase;
-        }
-
-        .stream-box p {
-            margin: 20px auto 30px;
-            max-width: 600px;
-            color: #999999;
-        }
-
-        /* =========================
-           FOOTER
-        ========================= */
-
-        footer {
-            padding: 45px 7%;
-            border-top: 1px solid #1c1c1c;
-            background: #030303;
-
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 20px;
-            flex-wrap: wrap;
-        }
-
-        footer strong {
-            color: #ffd21c;
-            letter-spacing: 2px;
-        }
-
-        footer p {
-            color: #666666;
-            font-size: 12px;
-        }
-
-        /* =========================
-           ANIMATIONS
-        ========================= */
-
-        @keyframes fadeUp {
-            from {
-                opacity: 0;
-                transform: translateY(25px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .hero-content > * {
-            animation: fadeUp 1s ease forwards;
-        }
-
-        .hero h1 {
-            animation-delay: 0.15s;
-        }
-
-        .hero-subtitle {
-            animation-delay: 0.3s;
-        }
-
-        .hero-buttons {
-            animation-delay: 0.45s;
-        }
-
-        /* =========================
-           MOBILE
-        ========================= */
-
-        @media (max-width: 800px) {
-
-            nav {
-                padding: 0 5%;
-            }
-
-            .nav-links {
-                gap: 12px;
-            }
-
-            .nav-links a {
-                font-size: 10px;
-            }
-
-            .logo {
-                font-size: 21px;
-                letter-spacing: 2px;
-            }
-
-            section {
-                padding: 80px 5%;
-            }
-
-            .games-grid,
-            .cards-grid,
-            .rules-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .workshop-points {
-                grid-template-columns: 1fr;
-            }
-
-            .hero h1 {
-                letter-spacing: -3px;
-            }
-
-            .hero-subtitle {
-                font-size: 14px;
-            }
-
-            .workshop-box {
-                padding: 30px;
-            }
-
-            footer {
-                text-align: center;
-                justify-content: center;
-            }
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-            html {
-                scroll-behavior: auto;
-            }
-
-            * {
-                animation: none !important;
-                transition: none !important;
-            }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>CLUTCH | The Ultimate Game</title>
+
+<style>
+
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&display=swap');
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    font-family: 'Orbitron', Arial, sans-serif;
+    background: #050505;
+    color: white;
+    min-height: 100vh;
+}
+
+/* NAVIGATION */
+
+nav {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+
+    height: 78px;
+
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    padding: 0 7%;
+
+    background: rgba(5,5,5,0.94);
+    border-bottom: 1px solid rgba(255,215,0,0.25);
+    backdrop-filter: blur(12px);
+}
+
+.logo {
+    color: #ffd000;
+    font-size: 27px;
+    font-weight: 900;
+    letter-spacing: 5px;
+    text-decoration: none;
+
+    text-shadow:
+        0 0 8px rgba(255,208,0,.8),
+        0 0 25px rgba(255,208,0,.35);
+}
+
+.nav-links {
+    display: flex;
+    gap: 30px;
+    align-items: center;
+}
+
+.nav-links a {
+    color: #ddd;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 13px;
+    transition: .2s;
+}
+
+.nav-links a:hover {
+    color: #ffd000;
+}
+
+.nav-button {
+    border: 1px solid #ffd000;
+    padding: 11px 17px;
+    border-radius: 6px;
+    color: #ffd000 !important;
+}
+
+.admin-button {
+    border-color: #ff4d4d;
+    color: #ff4d4d !important;
+}
+
+/* HERO */
+
+.hero {
+    min-height: calc(100vh - 78px);
+    position: relative;
+    overflow: hidden;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    text-align: center;
+}
+
+.hero-video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+
+    opacity: .34;
+    z-index: 0;
+}
+
+.hero-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+
+    background:
+        radial-gradient(circle at center,
+        rgba(255,208,0,.12),
+        transparent 42%),
+        linear-gradient(
+        rgba(0,0,0,.65),
+        rgba(0,0,0,.92)
+        );
+}
+
+.hero-content {
+    position: relative;
+    z-index: 2;
+    padding: 30px;
+}
+
+.badge {
+    display: inline-block;
+
+    border: 1px solid rgba(255,208,0,.55);
+    background: rgba(255,208,0,.08);
+
+    color: #ffd000;
+
+    padding: 10px 22px;
+    border-radius: 5px;
+
+    font-size: 12px;
+    letter-spacing: 2px;
+
+    margin-bottom: 28px;
+}
+
+.hero h1 {
+    font-size: clamp(65px, 13vw, 170px);
+    line-height: .9;
+    letter-spacing: 12px;
+    font-weight: 900;
+
+    color: #ffd000;
+
+    text-shadow:
+        0 0 10px rgba(255,208,0,.8),
+        0 0 40px rgba(255,208,0,.35);
+}
+
+.hero p {
+    margin: 35px auto;
+
+    max-width: 780px;
+
+    color: #ddd;
+    font-size: 16px;
+    line-height: 1.8;
+}
+
+.buttons {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.btn {
+    display: inline-block;
+
+    padding: 15px 28px;
+
+    text-decoration: none;
+
+    font-family: inherit;
+    font-weight: 800;
+    font-size: 13px;
+
+    border-radius: 6px;
+
+    cursor: pointer;
+
+    transition: .2s;
+}
+
+.btn-primary {
+    background: #ffd000;
+    color: #050505;
+
+    box-shadow: 0 0 25px rgba(255,208,0,.25);
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0 35px rgba(255,208,0,.5);
+}
+
+.btn-secondary {
+    color: #fff;
+    border: 1px solid #555;
+}
+
+.btn-secondary:hover {
+    border-color: #ffd000;
+    color: #ffd000;
+}
+
+
+/* PAGE */
+
+.page {
+    padding: 70px 7%;
+    max-width: 1400px;
+    margin: auto;
+}
+
+.page-title {
+    font-size: 42px;
+    color: #ffd000;
+    margin-bottom: 12px;
+}
+
+.page-subtitle {
+    color: #999;
+    margin-bottom: 45px;
+    line-height: 1.7;
+}
+
+
+/* EVENTS */
+
+.events-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    gap: 22px;
+}
+
+.event-card {
+    background: linear-gradient(
+        145deg,
+        rgba(255,255,255,.055),
+        rgba(255,255,255,.015)
+    );
+
+    border: 1px solid #292929;
+
+    border-radius: 12px;
+
+    padding: 28px;
+
+    transition: .25s;
+}
+
+.event-card:hover {
+    transform: translateY(-5px);
+    border-color: rgba(255,208,0,.55);
+
+    box-shadow:
+        0 15px 45px rgba(0,0,0,.4),
+        0 0 25px rgba(255,208,0,.08);
+}
+
+.event-icon {
+    font-size: 38px;
+    margin-bottom: 18px;
+}
+
+.event-card h2 {
+    color: #ffd000;
+    margin-bottom: 18px;
+}
+
+.event-info {
+    color: #bbb;
+    font-size: 12px;
+    line-height: 1.9;
+}
+
+.event-info strong {
+    color: white;
+}
+
+.register-btn {
+    display: block;
+
+    text-align: center;
+
+    margin-top: 22px;
+
+    padding: 13px;
+
+    background: #ffd000;
+    color: #050505;
+
+    border-radius: 6px;
+
+    text-decoration: none;
+
+    font-weight: 900;
+    font-size: 12px;
+}
+
+.register-btn:hover {
+    box-shadow: 0 0 25px rgba(255,208,0,.35);
+}
+
+.disabled {
+    background: #333;
+    color: #777;
+}
+
+
+/* AUTH */
+
+.auth-container {
+    max-width: 520px;
+    margin: 30px auto;
+}
+
+.auth-box {
+    background: #101010;
+    border: 1px solid #292929;
+    border-radius: 12px;
+    padding: 35px;
+}
+
+.auth-box h2 {
+    color: #ffd000;
+    margin-bottom: 25px;
+}
+
+input, select {
+    width: 100%;
+
+    padding: 14px;
+
+    margin-bottom: 14px;
+
+    background: #080808;
+
+    color: white;
+
+    border: 1px solid #333;
+
+    border-radius: 6px;
+
+    font-family: inherit;
+}
+
+input:focus, select:focus {
+    outline: none;
+    border-color: #ffd000;
+}
+
+.form-label {
+    display: block;
+    color: #aaa;
+    font-size: 11px;
+    margin-bottom: 7px;
+}
+
+.full-btn {
+    width: 100%;
+    border: none;
+}
+
+
+/* ADMIN */
+
+.admin-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 25px;
+    overflow: hidden;
+}
+
+.admin-table th,
+.admin-table td {
+    border-bottom: 1px solid #292929;
+    padding: 14px;
+    text-align: left;
+    font-size: 12px;
+}
+
+.admin-table th {
+    color: #ffd000;
+    background: #111;
+}
+
+.admin-table td {
+    color: #ccc;
+}
+
+
+/* ALERT */
+
+.alert {
+    max-width: 700px;
+    margin: 20px auto;
+    padding: 14px 18px;
+    border-radius: 6px;
+    background: rgba(255,208,0,.1);
+    border: 1px solid rgba(255,208,0,.4);
+    color: #ffd000;
+}
+
+
+/* FOOTER */
+
+footer {
+    margin-top: 80px;
+    padding: 35px 7%;
+
+    text-align: center;
+
+    border-top: 1px solid #222;
+
+    color: #666;
+
+    font-size: 11px;
+}
+
+
+/* MOBILE */
+
+@media(max-width: 700px) {
+
+    nav {
+        padding: 0 5%;
+        height: 70px;
+    }
+
+    .nav-links {
+        gap: 12px;
+    }
+
+    .nav-links a {
+        font-size: 10px;
+    }
+
+    .logo {
+        font-size: 19px;
+        letter-spacing: 3px;
+    }
+
+    .hero h1 {
+        letter-spacing: 5px;
+    }
+
+    .page {
+        padding: 50px 5%;
+    }
+
+    .page-title {
+        font-size: 32px;
+    }
+
+}
+
+</style>
 </head>
 
 <body>
 
-<!-- =========================
-     NAVIGATION
-========================= -->
-
 <nav>
-    <div class="logo">
-        CLUTCH<span>.</span>
-    </div>
 
-    <ul class="nav-links">
-        <li><a href="#games">Games</a></li>
-        <li><a href="#cards">Cards</a></li>
-        <li><a href="#workshop">Workshop</a></li>
-        <li><a href="#rules">Rules</a></li>
-        <li><a href="#stream">Live</a></li>
-    </ul>
+<a class="logo" href="{{ url_for('home') }}">CLUTCH</a>
+
+<div class="nav-links">
+
+<a href="{{ url_for('home') }}">HOME</a>
+
+<a href="{{ url_for('events') }}">EVENTS</a>
+
+{% if session.get('student_id') %}
+<a href="{{ url_for('student_dashboard') }}">MY ACCOUNT</a>
+<a href="{{ url_for('logout') }}" class="nav-button">LOGOUT</a>
+{% else %}
+<a href="{{ url_for('login') }}" class="nav-button">SIGN IN / REGISTER</a>
+{% endif %}
+
+<a href="{{ url_for('admin_login') }}" class="nav-button admin-button">
+ADMIN
+</a>
+
+</div>
+
 </nav>
 
 
-<!-- =========================
-     HERO
-========================= -->
+{% with messages = get_flashed_messages() %}
+{% if messages %}
+{% for message in messages %}
+<div class="alert">{{ message }}</div>
+{% endfor %}
+{% endif %}
+{% endwith %}
 
-<header class="hero">
 
-    <video class="hero-video"
-           autoplay
-           muted
-           loop
-           playsinline>
-        <source src="{{ url_for('static', filename='bd.mp4') }}"
-                type="video/mp4">
-    </video>
+{{ content|safe }}
 
-    <div class="hero-overlay"></div>
-
-    <div class="hero-content">
-
-        <div class="eyebrow">
-            The Ultimate Game
-        </div>
-
-        <h1>
-            CLUT<span>CH</span>
-        </h1>
-
-        <p class="hero-subtitle">
-            COMPETE. CREATE. CONQUER.
-        </p>
-
-        <div class="hero-buttons">
-            <a href="#games" class="btn btn-primary">
-                Explore Games
-            </a>
-
-            <a href="#stream" class="btn btn-secondary">
-                Watch Live
-            </a>
-        </div>
-
-    </div>
-
-</header>
-
-
-<!-- =========================
-     GAMES
-========================= -->
-
-<section id="games">
-
-    <div class="section-header">
-
-        <div class="section-label">
-            The Arena
-        </div>
-
-        <h2 class="section-title">
-            Choose Your<br>
-            Battlefield
-        </h2>
-
-        <p class="section-description">
-            Five competitive experiences. One ultimate gaming event.
-            Step into the arena and prove what you can do.
-        </p>
-
-    </div>
-
-
-    <div class="games-grid">
-
-        <div class="game-card">
-            <div class="game-number">01 / FPS</div>
-
-            <h3>VALORANT</h3>
-
-            <p>
-                Tactical competitive PC tournament.
-                Teamwork, precision and clutch plays decide
-                who survives.
-            </p>
-
-            <div class="game-info">
-                <span>5 Players</span>
-                <span>Classes 8–12</span>
-                <span>Single Elimination</span>
-                <span>BO1</span>
-            </div>
-        </div>
-
-
-        <div class="game-card">
-            <div class="game-number">02 / BATTLE ROYALE</div>
-
-            <h3>BGMI</h3>
-
-            <p>
-                Squad-based mobile battle royale where
-                strategy, positioning and survival matter.
-            </p>
-
-            <div class="game-info">
-                <span>4 Players / Team</span>
-                <span>24 Teams</span>
-                <span>TPP</span>
-                <span>7 Matches</span>
-            </div>
-        </div>
-
-
-        <div class="game-card">
-            <div class="game-number">03 / STRATEGY</div>
-
-            <h3>CHESS</h3>
-
-            <p>
-                Competitive online chess where calculation,
-                patience and tactical decisions determine
-                the winner.
-            </p>
-
-            <div class="game-info">
-                <span>1 Player</span>
-                <span>Blitz</span>
-                <span>Rapid</span>
-                <span>Knockout</span>
-            </div>
-        </div>
-
-
-        <div class="game-card">
-            <div class="game-number">04 / PVP</div>
-
-            <h3>MINECRAFT PVP</h3>
-
-            <p>
-                Enter the arena, fight your opponents and
-                survive the battle.
-            </p>
-
-            <div class="game-info">
-                <span>1 Player</span>
-                <span>10 Minutes</span>
-                <span>PVP Arena</span>
-            </div>
-        </div>
-
-
-        <div class="game-card">
-            <div class="game-number">05 / CREATIVE</div>
-
-            <h3>MINECRAFT BUILDING</h3>
-
-            <p>
-                Turn imagination into reality in a timed
-                creative building challenge.
-            </p>
-
-            <div class="game-info">
-                <span>1 Player</span>
-                <span>2 Hours</span>
-                <span>Creative</span>
-            </div>
-        </div>
-
-    </div>
-
-</section>
-
-
-<!-- =========================
-     ORGANISER / PARTICIPANT
-========================= -->
-
-<section id="cards">
-
-    <div class="section-header">
-
-        <div class="section-label">
-            Official Access
-        </div>
-
-        <h2 class="section-title">
-            CLUTCH<br>
-            ID Cards
-        </h2>
-
-        <p class="section-description">
-            Official identification cards for the CLUTCH event
-            organising committee and participants.
-        </p>
-
-    </div>
-
-
-    <div class="cards-grid">
-
-        <div class="role-card">
-
-            <img
-                src="{{ url_for('static', filename='Org-Card.png') }}"
-                alt="CLUTCH Organiser Event Crew Card"
-            >
-
-            <div class="role-title">
-                Organiser / Event Crew
-            </div>
-
-        </div>
-
-
-        <div class="role-card">
-
-            <img
-                src="{{ url_for('static', filename='Part-Card.png') }}"
-                alt="CLUTCH Player Event Participant Card"
-            >
-
-            <div class="role-title">
-                Player / Event Participant
-            </div>
-
-        </div>
-
-    </div>
-
-</section>
-
-
-<!-- =========================
-     WORKSHOP
-========================= -->
-
-<section id="workshop">
-
-    <div class="section-header">
-
-        <div class="section-label">
-            Learn & Create
-        </div>
-
-        <h2 class="section-title">
-            Game<br>
-            Development
-        </h2>
-
-    </div>
-
-
-    <div class="workshop-box">
-
-        <h3>
-            Game Development Workshop
-        </h3>
-
-        <p>
-            Learn the foundations of game development with
-            Microsoft Campus Ambassadors from BHU.
-            Explore how games are designed, built and brought
-            to life.
-        </p>
-
-
-        <div class="workshop-points">
-
-            <div class="workshop-point">
-                Game Concepts & Mechanics
-            </div>
-
-            <div class="workshop-point">
-                Controls & Gameplay
-            </div>
-
-            <div class="workshop-point">
-                Game Design
-            </div>
-
-            <div class="workshop-point">
-                Basic Game Development
-            </div>
-
-        </div>
-
-    </div>
-
-</section>
-
-
-<!-- =========================
-     RULES
-========================= -->
-
-<section id="rules">
-
-    <div class="section-header">
-
-        <div class="section-label">
-            Play Fair
-        </div>
-
-        <h2 class="section-title">
-            Quick<br>
-            Rules
-        </h2>
-
-        <p class="section-description">
-            Every player is expected to compete fairly,
-            respect opponents and follow the rules of their
-            respective game.
-        </p>
-
-    </div>
-
-
-    <div class="rules-grid">
-
-        <div class="rule">
-            <div class="rule-number">RULE 01</div>
-            <h4>Fair Play</h4>
-            <p>
-                No cheating, exploits or unfair external
-                advantages are permitted.
-            </p>
-        </div>
-
-
-        <div class="rule">
-            <div class="rule-number">RULE 02</div>
-            <h4>Respect</h4>
-            <p>
-                Players must maintain respectful behaviour
-                toward opponents, organisers and staff.
-            </p>
-        </div>
-
-
-        <div class="rule">
-            <div class="rule-number">RULE 03</div>
-            <h4>Match Timing</h4>
-            <p>
-                Players must be ready before their scheduled
-                match. Delays may affect participation.
-            </p>
-        </div>
-
-
-        <div class="rule">
-            <div class="rule-number">RULE 04</div>
-            <h4>Organiser Decision</h4>
-            <p>
-                Organisers have the final authority regarding
-                match disputes and event decisions.
-            </p>
-        </div>
-
-    </div>
-
-</section>
-
-
-<!-- =========================
-     LIVE STREAM
-========================= -->
-
-<section id="stream">
-
-    <div class="stream-box">
-
-        <div class="section-label">
-            Live Coverage
-        </div>
-
-        <h2>
-            Watch CLUTCH Live
-        </h2>
-
-        <p>
-            Follow the action, watch the biggest plays and
-            experience the CLUTCH tournament live on YouTube.
-        </p>
-
-        <a
-            href="https://www.youtube.com/"
-            target="_blank"
-            class="btn btn-primary"
-        >
-            YouTube Live
-        </a>
-
-    </div>
-
-</section>
-
-
-<!-- =========================
-     FOOTER
-========================= -->
 
 <footer>
-
-    <strong>CLUTCH</strong>
-
-    <p>
-        © 2026 CLUTCH — The Ultimate Game
-    </p>
-
+    © 2026 CLUTCH — THE ULTIMATE GAME
 </footer>
-
 
 </body>
 </html>
 """
 
 
+# ============================================================
+# HELPER
+# ============================================================
+
+def render_page(content):
+    return render_template_string(
+        BASE_HTML,
+        content=content
+    )
+
+
+# ============================================================
+# HOME
+# ============================================================
+
 @app.route("/")
 def home():
-    return render_template_string(HTML)
 
+    content = """
+    <section class="hero">
+
+        <video class="hero-video"
+               autoplay
+               muted
+               loop
+               playsinline>
+            <source src="/static/clutch-video.mp4" type="video/mp4">
+        </video>
+
+        <div class="hero-overlay"></div>
+
+        <div class="hero-content">
+
+            <div class="badge">
+                OFFICIAL ESPORTS ARENA
+            </div>
+
+            <h1>CLUTCH</h1>
+
+            <p>
+                Compete in high-stakes esports tournaments,
+                explore gaming events, participate in workshops,
+                and prove your skills.
+            </p>
+
+            <div class="buttons">
+
+                <a href="/events" class="btn btn-primary">
+                    EXPLORE EVENTS
+                </a>
+
+                <a href="/events" class="btn btn-secondary">
+                    VIEW RULES
+                </a>
+
+            </div>
+
+        </div>
+
+    </section>
+    """
+
+    return render_page(content)
+
+
+# ============================================================
+# EVENTS
+# ============================================================
+
+@app.route("/events")
+def events():
+
+    cards = ""
+
+    for event in EVENTS:
+
+        if event["form"] == "#":
+
+            register = """
+            <span class="register-btn disabled">
+                REGISTRATION INFORMATION
+            </span>
+            """
+
+        else:
+
+            register = f"""
+            <a
+                href="{event['form']}"
+                target="_blank"
+                class="register-btn">
+                REGISTER NOW
+            </a>
+            """
+
+        cards += f"""
+        <div class="event-card">
+
+            <div class="event-icon">
+                {event['icon']}
+            </div>
+
+            <h2>
+                {event['name']}
+            </h2>
+
+            <div class="event-info">
+
+                <div>
+                    <strong>Players:</strong>
+                    {event['players']}
+                </div>
+
+                <div>
+                    <strong>Eligibility:</strong>
+                    {event['classes']}
+                </div>
+
+                <div>
+                    <strong>Platform:</strong>
+                    {event['platform']}
+                </div>
+
+                <div>
+                    <strong>Format:</strong>
+                    {event['format']}
+                </div>
+
+                <br>
+
+                <div>
+                    {event['details']}
+                </div>
+
+            </div>
+
+            {register}
+
+        </div>
+        """
+
+    content = f"""
+    <main class="page">
+
+        <h1 class="page-title">
+            EVENTS
+        </h1>
+
+        <p class="page-subtitle">
+            Choose your battlefield. Read the event information
+            and register directly through the official registration form.
+        </p>
+
+        <div class="events-grid">
+            {cards}
+        </div>
+
+    </main>
+    """
+
+    return render_page(content)
+
+
+# ============================================================
+# STUDENT REGISTER
+# ============================================================
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+
+    if request.method == "POST":
+
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        class_name = request.form.get("class_name", "").strip()
+        section = request.form.get("section", "").strip()
+        password = request.form.get("password", "")
+
+        if not all([name, email, class_name, section, password]):
+
+            flash("Please fill all fields.")
+
+            return redirect(url_for("register"))
+
+        connection = get_db()
+
+        try:
+
+            connection.execute(
+                """
+                INSERT INTO students
+                (name, email, class_name, section, password)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    name,
+                    email,
+                    class_name,
+                    section,
+                    generate_password_hash(password)
+                )
+            )
+
+            connection.commit()
+
+            flash("Account created successfully. Please sign in.")
+
+            return redirect(url_for("login"))
+
+        except sqlite3.IntegrityError:
+
+            flash("This email is already registered.")
+
+        finally:
+
+            connection.close()
+
+    content = """
+    <main class="page">
+
+        <div class="auth-container">
+
+            <div class="auth-box">
+
+                <h2>STUDENT REGISTER</h2>
+
+                <form method="POST">
+
+                    <label class="form-label">
+                        FULL NAME
+                    </label>
+
+                    <input
+                        type="text"
+                        name="name"
+                        placeholder="Your full name"
+                        required
+                    >
+
+                    <label class="form-label">
+                        EMAIL
+                    </label>
+
+                    <input
+                        type="email"
+                        name="email"
+                        placeholder="your@email.com"
+                        required
+                    >
+
+                    <label class="form-label">
+                        CLASS
+                    </label>
+
+                    <input
+                        type="text"
+                        name="class_name"
+                        placeholder="Example: 10"
+                        required
+                    >
+
+                    <label class="form-label">
+                        SECTION
+                    </label>
+
+                    <input
+                        type="text"
+                        name="section"
+                        placeholder="Example: A"
+                        required
+                    >
+
+                    <label class="form-label">
+                        PASSWORD
+                    </label>
+
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="Create a password"
+                        required
+                    >
+
+                    <button class="btn btn-primary full-btn">
+                        CREATE ACCOUNT
+                    </button>
+
+                </form>
+
+                <br>
+
+                <p style="color:#777;font-size:11px;">
+                    Already registered?
+                    <a href="/login" style="color:#ffd000;">
+                        Sign in
+                    </a>
+                </p>
+
+            </div>
+
+        </div>
+
+    </main>
+    """
+
+    return render_page(content)
+
+
+# ============================================================
+# STUDENT LOGIN
+# ============================================================
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+
+    if request.method == "POST":
+
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+
+        connection = get_db()
+
+        student = connection.execute(
+            "SELECT * FROM students WHERE email = ?",
+            (email,)
+        ).fetchone()
+
+        connection.close()
+
+        if student and check_password_hash(student["password"], password):
+
+            session["student_id"] = student["id"]
+
+            return redirect(url_for("student_dashboard"))
+
+        flash("Incorrect email or password.")
+
+    content = """
+    <main class="page">
+
+        <div class="auth-container">
+
+            <div class="auth-box">
+
+                <h2>STUDENT LOGIN</h2>
+
+                <form method="POST">
+
+                    <label class="form-label">
+                        EMAIL
+                    </label>
+
+                    <input
+                        type="email"
+                        name="email"
+                        placeholder="Your email"
+                        required
+                    >
+
+                    <label class="form-label">
+                        PASSWORD
+                    </label>
+
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="Your password"
+                        required
+                    >
+
+                    <button class="btn btn-primary full-btn">
+                        SIGN IN
+                    </button>
+
+                </form>
+
+                <br>
+
+                <p style="color:#777;font-size:11px;">
+                    Don't have an account?
+                    <a href="/register" style="color:#ffd000;">
+                        Register
+                    </a>
+                </p>
+
+            </div>
+
+        </div>
+
+    </main>
+    """
+
+    return render_page(content)
+
+
+# ============================================================
+# STUDENT DASHBOARD
+# ============================================================
+
+@app.route("/student")
+def student_dashboard():
+
+    if not session.get("student_id"):
+
+        return redirect(url_for("login"))
+
+    connection = get_db()
+
+    student = connection.execute(
+        "SELECT * FROM students WHERE id = ?",
+        (session["student_id"],)
+    ).fetchone()
+
+    connection.close()
+
+    if not student:
+
+        session.pop("student_id", None)
+
+        return redirect(url_for("login"))
+
+    content = f"""
+    <main class="page">
+
+        <h1 class="page-title">
+            WELCOME, {student['name'].upper()}
+        </h1>
+
+        <p class="page-subtitle">
+            Your CLUTCH student account.
+        </p>
+
+        <div class="event-card">
+
+            <h2>STUDENT INFORMATION</h2>
+
+            <div class="event-info">
+
+                <p>
+                    <strong>Name:</strong>
+                    {student['name']}
+                </p>
+
+                <p>
+                    <strong>Email:</strong>
+                    {student['email']}
+                </p>
+
+                <p>
+                    <strong>Class:</strong>
+                    {student['class_name']}
+                </p>
+
+                <p>
+                    <strong>Section:</strong>
+                    {student['section']}
+                </p>
+
+            </div>
+
+            <br>
+
+            <a href="/events" class="btn btn-primary">
+                BROWSE EVENTS
+            </a>
+
+        </div>
+
+    </main>
+    """
+
+    return render_page(content)
+
+
+# ============================================================
+# LOGOUT
+# ============================================================
+
+@app.route("/logout")
+def logout():
+
+    session.pop("student_id", None)
+    session.pop("admin", None)
+
+    return redirect(url_for("home"))
+
+
+# ============================================================
+# ADMIN LOGIN
+# ============================================================
+
+@app.route("/admin", methods=["GET", "POST"])
+def admin_login():
+
+    if request.method == "POST":
+
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+
+        if (
+            username == ADMIN_USERNAME
+            and password == ADMIN_PASSWORD
+        ):
+
+            session["admin"] = True
+
+            return redirect(url_for("admin_dashboard"))
+
+        flash("Invalid admin credentials.")
+
+    content = """
+    <main class="page">
+
+        <div class="auth-container">
+
+            <div class="auth-box">
+
+                <h2>CLUTCH ADMIN</h2>
+
+                <form method="POST">
+
+                    <label class="form-label">
+                        ADMIN ID
+                    </label>
+
+                    <input
+                        type="text"
+                        name="username"
+                        placeholder="Admin ID"
+                        required
+                    >
+
+                    <label class="form-label">
+                        PASSWORD
+                    </label>
+
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="Admin password"
+                        required
+                    >
+
+                    <button class="btn btn-primary full-btn">
+                        ADMIN SIGN IN
+                    </button>
+
+                </form>
+
+            </div>
+
+        </div>
+
+    </main>
+    """
+
+    return render_page(content)
+
+
+# ============================================================
+# ADMIN DASHBOARD
+# ============================================================
+
+@app.route("/admin/dashboard")
+def admin_dashboard():
+
+    if not session.get("admin"):
+
+        return redirect(url_for("admin_login"))
+
+    connection = get_db()
+
+    students = connection.execute(
+        "SELECT id, name, email, class_name, section FROM students ORDER BY id DESC"
+    ).fetchall()
+
+    connection.close()
+
+    rows = ""
+
+    for student in students:
+
+        rows += f"""
+        <tr>
+
+            <td>{student['id']}</td>
+
+            <td>{student['name']}</td>
+
+            <td>{student['email']}</td>
+
+            <td>{student['class_name']}</td>
+
+            <td>{student['section']}</td>
+
+        </tr>
+        """
+
+    if not rows:
+
+        rows = """
+        <tr>
+            <td colspan="5">
+                No students have registered yet.
+            </td>
+        </tr>
+        """
+
+    content = f"""
+    <main class="page">
+
+        <h1 class="page-title">
+            CLUTCH ADMIN
+        </h1>
+
+        <p class="page-subtitle">
+            Admin control panel.
+        </p>
+
+        <div class="event-card">
+
+            <h2>
+                REGISTERED STUDENTS
+            </h2>
+
+            <div style="overflow-x:auto;">
+
+                <table class="admin-table">
+
+                    <thead>
+
+                        <tr>
+                            <th>ID</th>
+                            <th>NAME</th>
+                            <th>EMAIL</th>
+                            <th>CLASS</th>
+                            <th>SECTION</th>
+                        </tr>
+
+                    </thead>
+
+                    <tbody>
+
+                        {rows}
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+        <br>
+
+        <a href="/logout" class="btn btn-secondary">
+            LOG OUT
+        </a>
+
+    </main>
+    """
+
+    return render_page(content)
+
+
+# ============================================================
+# RUN
+# ============================================================
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000)),
+        debug=True
+    )
